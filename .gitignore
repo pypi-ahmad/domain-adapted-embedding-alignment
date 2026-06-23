@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.env
+*.log
+.mplconfig/
+*.egg-info/
+.uv-cache/
+run_archives/
+unsloth_compiled_cache/
+data/hf_cache/
+data/hf_cache_full/
+data/processed/
+artifacts/
+chroma_db/
+notebooks/*.executed.ipynb

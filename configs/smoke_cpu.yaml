@@ -1,0 +1,19 @@
+profile_name: smoke_cpu
+random_seed: 17
+skip_data_preparation_if_present: true
+training_backend: auto
+strict_backend: false
+msmarco_max_rows: 2000
+medical_max_records: 600
+legal_max_records: 600
+cyber_max_records: 1200
+final_pair_target: 4000
+
+train_batch_size: 1
+eval_batch_size: 2
+grad_accum_steps: 2
+train_epochs: 1
+train_max_steps: 20
+eval_every_steps: 10
+use_live_pinecone: false
+inference_doc_limit: 300

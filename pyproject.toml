@@ -1,0 +1,86 @@
+[project]
+name = "domain-adapted-embedding-alignment"
+version = "0.1.0"
+description = "Production-grade tutorial project for domain-adapted embedding alignment across medical, legal, and cybersecurity retrieval"
+readme = "README.md"
+requires-python = "==3.12.10"
+dependencies = [
+  "accelerate>=0.34.2",
+  "bert-score>=0.3.13",
+  "bitsandbytes>=0.46.1",
+  "chromadb>=0.5.5",
+  "datasets>=3.0.0",
+  "huggingface-hub>=0.30.2",
+  "ipykernel>=6.29.5",
+  "jupyter>=1.1.1",
+  "langchain-core>=0.3.67",
+  "loguru>=0.7.3",
+  "matplotlib>=3.10.0",
+  "nbconvert>=7.16.4",
+  "nbformat>=5.10.4",
+  "networkx>=3.4.2",
+  "nltk>=3.9.1",
+  "numpy>=2.1.0",
+  "ollama>=0.5.1",
+  "pandas>=2.2.3",
+  "peft>=0.14.0",
+  "pinecone>=7.3.0",
+  "polars>=1.24.0",
+  "pyarrow>=19.0.1",
+  "pydantic>=2.11.3",
+  "pydantic-settings>=2.8.1",
+  "python-dotenv>=1.1.0",
+  "python-louvain>=0.16",
+  "rank-bm25>=0.2.2",
+  "rouge-score>=0.1.2",
+  "scikit-learn>=1.6.1",
+  "scipy>=1.15.2",
+  "seaborn>=0.13.2",
+  "sentencepiece>=0.2.0",
+  "torch>=2.7.0",
+  "tqdm>=4.67.1",
+  "transformers>=4.52.4",
+  "umap-learn>=0.5.9.post2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+  "ruff>=0.11.2",
+]
+unsloth = [
+  "unsloth",
+  "sentence-transformers>=3.1.0",
+]
+trl = [
+  "trl>=0.23.0",
+]
+
+[project.scripts]
+dea-cli = "domain_adapted_embedding_alignment.cli:main"
+
+[build-system]
+requires = ["setuptools>=75.8.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv]
+package = true
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W", "B"]
+ignore = ["E501"]
