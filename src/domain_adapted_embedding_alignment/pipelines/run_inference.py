@@ -16,8 +16,10 @@ from domain_adapted_embedding_alignment.utils import latency_summary
 def run_demo_inference(settings: Settings, queries: list[str]) -> dict:
     """Run natural-language retrieval examples across target domains."""
     docs = (
-        pl.read_parquet(settings.processed_data_dir / "documents.parquet")
-        .head(settings.inference_doc_limit)
+        pl.scan_parquet(settings.processed_data_dir / "documents.parquet")
+        .select(["doc_id", "text", "domain", "source"])
+        .limit(settings.inference_doc_limit)
+        .collect(streaming=True)
         .to_dicts()
     )
     doc_ids = [str(row["doc_id"]) for row in docs]

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from loguru import logger
 import polars as pl
+from loguru import logger
 
 from domain_adapted_embedding_alignment.evaluation.visualization import plot_embedding_projections
 from domain_adapted_embedding_alignment.pipelines.evaluate_models import run_evaluation
@@ -12,15 +12,19 @@ from domain_adapted_embedding_alignment.pipelines.finalize_reports import (
     build_tool_impact_report,
 )
 from domain_adapted_embedding_alignment.pipelines.prepare_data import run_prepare_data
-from domain_adapted_embedding_alignment.pipelines.run_graphrag_benchmarks import run_graphrag_benchmarks
+from domain_adapted_embedding_alignment.pipelines.run_graphrag_benchmarks import (
+    run_graphrag_benchmarks,
+)
 from domain_adapted_embedding_alignment.pipelines.run_inference import run_demo_inference
 from domain_adapted_embedding_alignment.pipelines.run_rag_benchmarks import run_rag_benchmarks
 from domain_adapted_embedding_alignment.pipelines.train_model import run_train
-from domain_adapted_embedding_alignment.retrieval.backend_factory import build_baseline_backend, build_tuned_backend
+from domain_adapted_embedding_alignment.retrieval.backend_factory import (
+    build_baseline_backend,
+    build_tuned_backend,
+)
 from domain_adapted_embedding_alignment.retrieval.embeddings import HuggingFaceEmbeddingBackend
 from domain_adapted_embedding_alignment.settings import Settings
 from domain_adapted_embedding_alignment.utils import save_json
-
 
 DEFAULT_INFERENCE_QUERIES = [
     "What treatments are available for a brain tumor?",
@@ -61,8 +65,13 @@ def run_end_to_end(
     eval_report = run_evaluation(settings, run_judge=run_judge)
 
     # Embedding projection figures before vs after fine-tuning.
-    docs = pl.read_parquet(settings.processed_data_dir / "documents.parquet").to_dicts()
-    sample_docs = docs[: settings.eval_doc_limit]
+    sample_docs = (
+        pl.scan_parquet(settings.processed_data_dir / "documents.parquet")
+        .select(["text", "domain"])
+        .limit(settings.eval_doc_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
     doc_texts = [row["text"] for row in sample_docs]
     labels = [row["domain"] for row in sample_docs]
 

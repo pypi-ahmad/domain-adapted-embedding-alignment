@@ -22,7 +22,18 @@ class BM25Retriever:
         self._bm25 = BM25Okapi(self._tokenized_docs)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
+        if top_k <= 0:
+            return []
         tokens = _tokenize(query)
         scores = self._bm25.get_scores(tokens)
-        idx = np.argsort(scores)[::-1][:top_k]
+        k = min(top_k, int(scores.shape[0]))
+        if k == 0:
+            return []
+
+        if k == int(scores.shape[0]):
+            idx = np.argsort(scores)[::-1]
+        else:
+            candidate_idx = np.argpartition(scores, -k)[-k:]
+            idx = candidate_idx[np.argsort(scores[candidate_idx])[::-1]]
+
         return [(self.doc_ids[int(i)], float(scores[int(i)])) for i in idx]

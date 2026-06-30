@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import time
 
-from loguru import logger
 import polars as pl
+from loguru import logger
 
 from domain_adapted_embedding_alignment.rag.chroma_demo import build_chroma_index, search_chroma
-from domain_adapted_embedding_alignment.rag.pinecone_demo import build_pinecone_index, search_pinecone
-from domain_adapted_embedding_alignment.retrieval.backend_factory import build_baseline_backend, build_tuned_backend
+from domain_adapted_embedding_alignment.rag.pinecone_demo import (
+    build_pinecone_index,
+    search_pinecone,
+)
+from domain_adapted_embedding_alignment.retrieval.backend_factory import (
+    build_baseline_backend,
+    build_tuned_backend,
+)
 from domain_adapted_embedding_alignment.retrieval.embeddings import HuggingFaceEmbeddingBackend
 from domain_adapted_embedding_alignment.settings import Settings
 from domain_adapted_embedding_alignment.utils import latency_summary, save_json
@@ -17,8 +23,20 @@ from domain_adapted_embedding_alignment.utils import latency_summary, save_json
 
 def run_rag_benchmarks(settings: Settings) -> dict:
     """Build Chroma/Pinecone indexes and compare baseline vs tuned retrieval."""
-    docs = pl.read_parquet(settings.processed_data_dir / "documents.parquet").head(settings.rag_doc_limit).to_dicts()
-    eval_queries = pl.read_parquet(settings.processed_data_dir / "queries.parquet").to_dicts()[: settings.rag_query_limit]
+    docs = (
+        pl.scan_parquet(settings.processed_data_dir / "documents.parquet")
+        .select(["doc_id", "text", "domain"])
+        .limit(settings.rag_doc_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
+    eval_queries = (
+        pl.scan_parquet(settings.processed_data_dir / "queries.parquet")
+        .select(["query_id", "domain", "query", "relevant_doc_ids"])
+        .limit(settings.rag_query_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
 
     doc_ids = [str(row["doc_id"]) for row in docs]
     doc_texts = [str(row["text"]) for row in docs]

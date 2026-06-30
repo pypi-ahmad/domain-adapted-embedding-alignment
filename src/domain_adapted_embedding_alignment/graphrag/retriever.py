@@ -12,6 +12,20 @@ def _query_terms(query: str) -> set[str]:
     return {tok.lower() for tok in re.findall(r"[A-Za-z][A-Za-z0-9\-]{2,}", query)}
 
 
+def _document_terms(graph: nx.Graph, doc_id: str) -> set[str]:
+    terms = graph.nodes[doc_id].get("term_set")
+    if isinstance(terms, set):
+        return terms
+    if isinstance(terms, list):
+        term_set = set(str(item) for item in terms)
+        graph.nodes[doc_id]["term_set"] = term_set
+        return term_set
+
+    term_set = _query_terms(str(graph.nodes[doc_id].get("text", "")))
+    graph.nodes[doc_id]["term_set"] = term_set
+    return term_set
+
+
 def local_graph_retrieval(
     graph: nx.Graph,
     dense_hits: list[tuple[str, float]],
@@ -67,7 +81,7 @@ def global_community_retrieval(
     for community_id, doc_ids in community_docs.items():
         score = 0.0
         for doc_id in doc_ids:
-            text_terms = _query_terms(str(graph.nodes[doc_id].get("text", "")))
+            text_terms = _document_terms(graph, doc_id)
             if not text_terms:
                 continue
             overlap = len(query_vocab.intersection(text_terms))
@@ -79,7 +93,7 @@ def global_community_retrieval(
     doc_scores: dict[str, float] = {}
     for community_id, c_score in top_communities:
         for doc_id in community_docs[community_id]:
-            term_overlap = len(query_vocab.intersection(_query_terms(str(graph.nodes[doc_id].get("text", "")))))
+            term_overlap = len(query_vocab.intersection(_document_terms(graph, doc_id)))
             doc_scores[doc_id] = c_score + (term_overlap * 0.05)
 
     ranked = sorted(doc_scores.items(), key=lambda item: item[1], reverse=True)

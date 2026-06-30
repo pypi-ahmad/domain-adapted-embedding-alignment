@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import random
+import sys
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -14,11 +16,18 @@ from loguru import logger
 
 
 def configure_logging() -> None:
-    """Configure loguru to emit concise structured logs."""
+    """Configure loguru to emit structured logs to stderr by default."""
     logger.remove()
+    use_json = os.getenv("DEA_LOG_JSON", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if use_json:
+        logger.add(sys.stderr, serialize=True, backtrace=False, diagnose=False)
+        return
+
     logger.add(
-        sink=lambda msg: print(msg, end=""),
+        sys.stderr,
         format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | {message}",
+        backtrace=False,
+        diagnose=False,
     )
 
 

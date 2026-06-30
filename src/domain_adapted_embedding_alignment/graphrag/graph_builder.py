@@ -10,7 +10,6 @@ import networkx as nx
 from community import community_louvain
 from loguru import logger
 
-
 _STOPWORDS = {
     "the",
     "and",
@@ -61,6 +60,7 @@ def build_document_entity_graph(documents: list[dict[str, Any]]) -> tuple[nx.Gra
         graph.add_node(doc_id, node_type="document", domain=doc.get("domain", "unknown"))
 
         terms = _extract_terms(doc.get("text", ""))
+        graph.nodes[doc_id]["term_set"] = set(terms)
         for term in terms:
             term_node = f"term::{term}"
             graph.add_node(term_node, node_type="term")

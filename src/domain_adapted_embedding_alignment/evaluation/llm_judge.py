@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import ollama
 from loguru import logger
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 @dataclass(slots=True)
@@ -15,6 +16,28 @@ class JudgeScore:
     usefulness: float
     semantic_relevance: float
     reasoning: str
+
+
+class _JudgeResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    relevance: float = Field(ge=1.0, le=5.0)
+    usefulness: float = Field(ge=1.0, le=5.0)
+    semantic_relevance: float = Field(ge=1.0, le=5.0)
+    reasoning: str = Field(min_length=1, max_length=512)
+
+
+_JUDGE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "relevance": {"type": "number", "minimum": 1, "maximum": 5},
+        "usefulness": {"type": "number", "minimum": 1, "maximum": 5},
+        "semantic_relevance": {"type": "number", "minimum": 1, "maximum": 5},
+        "reasoning": {"type": "string"},
+    },
+    "required": ["relevance", "usefulness", "semantic_relevance", "reasoning"],
+    "additionalProperties": False,
+}
 
 
 def judge_retrieval_context(
@@ -57,15 +80,27 @@ Return JSON only:
         response = ollama.chat(
             model=model_name,
             messages=[{"role": "user", "content": prompt}],
-            format="json",
+            format=_JUDGE_SCHEMA,
             options={"temperature": 0.0, "num_predict": 250},
         )
-        payload = json.loads(response["message"]["content"])
+        content = response["message"]["content"]
+        if isinstance(content, str):
+            payload = _JudgeResponse.model_validate_json(content)
+        else:
+            payload = _JudgeResponse.model_validate(content)
         return JudgeScore(
-            relevance=float(payload.get("relevance", 3)),
-            usefulness=float(payload.get("usefulness", 3)),
-            semantic_relevance=float(payload.get("semantic_relevance", 3)),
-            reasoning=str(payload.get("reasoning", "No reasoning provided.")),
+            relevance=float(payload.relevance),
+            usefulness=float(payload.usefulness),
+            semantic_relevance=float(payload.semantic_relevance),
+            reasoning=str(payload.reasoning),
+        )
+    except (ValidationError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        logger.warning("Judge model '{}' returned invalid schema payload: {}", model_name, exc)
+        return JudgeScore(
+            relevance=3.0,
+            usefulness=3.0,
+            semantic_relevance=3.0,
+            reasoning="Judge fallback score used because schema validation failed.",
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning("Judge model '{}' failed: {}", model_name, exc)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import numpy as np
 import polars as pl
 from loguru import logger
@@ -13,24 +11,46 @@ from domain_adapted_embedding_alignment.evaluation.evaluator import (
     evaluate_similarity_and_clusters,
     save_evaluation_report,
 )
-from domain_adapted_embedding_alignment.retrieval.backend_factory import build_baseline_backend, build_tuned_backend
+from domain_adapted_embedding_alignment.retrieval.backend_factory import (
+    build_baseline_backend,
+    build_tuned_backend,
+)
 from domain_adapted_embedding_alignment.retrieval.bm25 import BM25Retriever
 from domain_adapted_embedding_alignment.retrieval.dense import DenseRetriever
 from domain_adapted_embedding_alignment.retrieval.embeddings import HuggingFaceEmbeddingBackend
-from domain_adapted_embedding_alignment.retrieval.hybrid import reciprocal_rank_fusion, weighted_score_fusion
+from domain_adapted_embedding_alignment.retrieval.hybrid import (
+    reciprocal_rank_fusion,
+    weighted_score_fusion,
+)
 from domain_adapted_embedding_alignment.schemas import EvalQuery
 from domain_adapted_embedding_alignment.settings import Settings
 
 
 def _load_inputs(settings: Settings) -> tuple[list[dict], list[EvalQuery], list[dict]]:
-    docs_frame = pl.read_parquet(settings.processed_data_dir / "documents.parquet").head(settings.eval_doc_limit)
-    queries_frame = pl.read_parquet(settings.processed_data_dir / "queries.parquet")
-    pairs_frame = pl.read_parquet(settings.processed_data_dir / "pairs.parquet")
-
-    docs = docs_frame.to_dicts()
-    eval_queries = [EvalQuery(**row) for row in queries_frame.filter(pl.col("query_id").is_not_null()).to_dicts()]
-    eval_queries = eval_queries[: settings.eval_query_limit]
-    pairs = pairs_frame.filter(pl.col("split") == "test").to_dicts()[: settings.similarity_sample_limit]
+    docs = (
+        pl.scan_parquet(settings.processed_data_dir / "documents.parquet")
+        .select(["doc_id", "text", "domain", "source", "label"])
+        .limit(settings.eval_doc_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
+    eval_queries_rows = (
+        pl.scan_parquet(settings.processed_data_dir / "queries.parquet")
+        .filter(pl.col("query_id").is_not_null())
+        .select(["query_id", "domain", "query", "relevant_doc_ids", "reference_answer"])
+        .limit(settings.eval_query_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
+    pairs = (
+        pl.scan_parquet(settings.processed_data_dir / "pairs.parquet")
+        .filter(pl.col("split") == "test")
+        .select(["query", "positive_text", "hard_negative_text", "domain"])
+        .limit(settings.similarity_sample_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
+    eval_queries = [EvalQuery(**row) for row in eval_queries_rows]
     return docs, eval_queries, pairs
 
 
@@ -40,7 +60,6 @@ def run_evaluation(settings: Settings, run_judge: bool = True) -> dict:
 
     doc_ids = [str(row["doc_id"]) for row in docs]
     doc_texts = [str(row["text"]) for row in docs]
-    doc_domains = [str(row["domain"]) for row in docs]
     doc_lookup = {str(row["doc_id"]): row for row in docs}
 
     logger.info("Building retrieval systems for evaluation")
@@ -94,14 +113,16 @@ def run_evaluation(settings: Settings, run_judge: bool = True) -> dict:
         sparse_hits = bm25.search(query, top_k=top_k * 2)
         weighted = weighted_score_fusion(dense_hits, sparse_hits, top_k=top_k)
         rrf = reciprocal_rank_fusion([dense_hits, sparse_hits], top_k=top_k)
-        return [(doc_id, (w_score + dict(rrf).get(doc_id, 0.0)) / 2.0) for doc_id, w_score in weighted]
+        rrf_lookup = dict(rrf)
+        return [(doc_id, (w_score + rrf_lookup.get(doc_id, 0.0)) / 2.0) for doc_id, w_score in weighted]
 
     def hybrid_tuned(query: str, top_k: int = 10):
         dense_hits = tuned_dense.search(query, top_k=top_k * 2)
         sparse_hits = bm25.search(query, top_k=top_k * 2)
         weighted = weighted_score_fusion(dense_hits, sparse_hits, top_k=top_k)
         rrf = reciprocal_rank_fusion([dense_hits, sparse_hits], top_k=top_k)
-        return [(doc_id, (w_score + dict(rrf).get(doc_id, 0.0)) / 2.0) for doc_id, w_score in weighted]
+        rrf_lookup = dict(rrf)
+        return [(doc_id, (w_score + rrf_lookup.get(doc_id, 0.0)) / 2.0) for doc_id, w_score in weighted]
 
     bm25_eval = evaluate_retrieval_system(eval_queries, bm25_search, doc_lookup, settings, run_llm_judge=False)
     baseline_eval = evaluate_retrieval_system(eval_queries, baseline_search, doc_lookup, settings, run_llm_judge=run_judge)
@@ -127,16 +148,21 @@ def run_evaluation(settings: Settings, run_judge: bool = True) -> dict:
     sample_negatives = [row["hard_negative_text"] for row in test_pairs]
     sample_domains = [row["domain"] for row in test_pairs]
 
-    baseline_q = baseline_backend.embed_texts(sample_queries, normalize=True)
-    baseline_p = baseline_backend.embed_texts(sample_positives, normalize=True)
-    baseline_n = baseline_backend.embed_texts(sample_negatives, normalize=True)
+    if sample_queries:
+        n_samples = len(sample_queries)
+        stacked_inputs = sample_queries + sample_positives + sample_negatives
 
-    tuned_q = tuned_backend.embed_texts(sample_queries, normalize=True)
-    tuned_p = tuned_backend.embed_texts(sample_positives, normalize=True)
-    tuned_n = tuned_backend.embed_texts(sample_negatives, normalize=True)
+        baseline_all = baseline_backend.embed_texts(stacked_inputs, normalize=True)
+        baseline_q, baseline_p, baseline_n = np.split(baseline_all, [n_samples, 2 * n_samples])
 
-    baseline_similarity = evaluate_similarity_and_clusters(baseline_q, baseline_p, baseline_n, sample_domains)
-    tuned_similarity = evaluate_similarity_and_clusters(tuned_q, tuned_p, tuned_n, sample_domains)
+        tuned_all = tuned_backend.embed_texts(stacked_inputs, normalize=True)
+        tuned_q, tuned_p, tuned_n = np.split(tuned_all, [n_samples, 2 * n_samples])
+
+        baseline_similarity = evaluate_similarity_and_clusters(baseline_q, baseline_p, baseline_n, sample_domains)
+        tuned_similarity = evaluate_similarity_and_clusters(tuned_q, tuned_p, tuned_n, sample_domains)
+    else:
+        baseline_similarity = {}
+        tuned_similarity = {}
 
     payload = {
         "backend_metadata": {

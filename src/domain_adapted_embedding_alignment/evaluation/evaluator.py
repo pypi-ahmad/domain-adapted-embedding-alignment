@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -62,7 +63,7 @@ def _cluster_metrics(embeddings: np.ndarray, labels: list[str]) -> dict[str, flo
     intra_values: list[float] = []
     inter_values: list[float] = []
 
-    for label, idxs in label_to_indices.items():
+    for _label, idxs in label_to_indices.items():
         if len(idxs) < 2:
             continue
         subset = embeddings[idxs]
@@ -95,7 +96,7 @@ def evaluate_retrieval_system(
     """Evaluate one retrieval system against held-out query relevance."""
 
     query_rows: list[dict] = []
-    judge_rows: list[dict] = []
+    judge_candidates: list[dict[str, str]] = []
     retrieval_latencies: list[float] = []
 
     for query in queries:
@@ -113,38 +114,53 @@ def evaluate_retrieval_system(
         }
         query_rows.append(row)
 
-        if run_llm_judge and len(judge_rows) < settings.judge_max_queries:
+        if run_llm_judge and len(judge_candidates) < settings.judge_max_queries:
             context_docs = [doc_lookup[doc_id]["text"] for doc_id in retrieved_ids if doc_id in doc_lookup][:4]
             context = "\n\n".join(context_docs)
             retrieved_summary = " | ".join(
                 [doc_lookup[doc_id].get("label", "") for doc_id in retrieved_ids if doc_id in doc_lookup][:4]
             )
 
-            judge_primary = judge_retrieval_context(
-                settings.judge_model_primary,
-                query.query,
-                context,
-                retrieved_summary,
-            )
-            judge_secondary = judge_retrieval_context(
-                settings.judge_model_secondary,
-                query.query,
-                context,
-                retrieved_summary,
-            )
-
-            judge_rows.append(
+            judge_candidates.append(
                 {
                     "query_id": query.query_id,
                     "domain": query.domain,
-                    "primary_relevance": judge_primary.relevance,
-                    "primary_usefulness": judge_primary.usefulness,
-                    "primary_semantic_relevance": judge_primary.semantic_relevance,
-                    "secondary_relevance": judge_secondary.relevance,
-                    "secondary_usefulness": judge_secondary.usefulness,
-                    "secondary_semantic_relevance": judge_secondary.semantic_relevance,
+                    "query": query.query,
+                    "context": context,
+                    "retrieved_summary": retrieved_summary,
                 }
             )
+
+    judge_rows: list[dict] = []
+    if judge_candidates:
+        max_workers = min(8, len(judge_candidates))
+
+        def _score_candidate(candidate: dict[str, str]) -> dict:
+            judge_primary = judge_retrieval_context(
+                settings.judge_model_primary,
+                candidate["query"],
+                candidate["context"],
+                candidate["retrieved_summary"],
+            )
+            judge_secondary = judge_retrieval_context(
+                settings.judge_model_secondary,
+                candidate["query"],
+                candidate["context"],
+                candidate["retrieved_summary"],
+            )
+            return {
+                "query_id": candidate["query_id"],
+                "domain": candidate["domain"],
+                "primary_relevance": judge_primary.relevance,
+                "primary_usefulness": judge_primary.usefulness,
+                "primary_semantic_relevance": judge_primary.semantic_relevance,
+                "secondary_relevance": judge_secondary.relevance,
+                "secondary_usefulness": judge_secondary.usefulness,
+                "secondary_semantic_relevance": judge_secondary.semantic_relevance,
+            }
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            judge_rows = list(executor.map(_score_candidate, judge_candidates))
 
     retrieval_metrics = summarize_retrieval_metrics(query_rows)
 

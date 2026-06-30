@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
+import pickle
 import time
 
-import networkx as nx
 import polars as pl
-import pickle
 from loguru import logger
 
 from domain_adapted_embedding_alignment.graphrag.graph_builder import build_document_entity_graph
@@ -14,7 +13,10 @@ from domain_adapted_embedding_alignment.graphrag.retriever import (
     global_community_retrieval,
     local_graph_retrieval,
 )
-from domain_adapted_embedding_alignment.retrieval.backend_factory import build_baseline_backend, build_tuned_backend
+from domain_adapted_embedding_alignment.retrieval.backend_factory import (
+    build_baseline_backend,
+    build_tuned_backend,
+)
 from domain_adapted_embedding_alignment.retrieval.dense import DenseRetriever
 from domain_adapted_embedding_alignment.retrieval.embeddings import HuggingFaceEmbeddingBackend
 from domain_adapted_embedding_alignment.settings import Settings
@@ -28,13 +30,19 @@ def _hit_at_k(hits: list[tuple[str, float]], relevant: set[str], k: int = 5) -> 
 
 def run_graphrag_benchmarks(settings: Settings) -> dict:
     docs = (
-        pl.read_parquet(settings.processed_data_dir / "documents.parquet")
+        pl.scan_parquet(settings.processed_data_dir / "documents.parquet")
+        .select(["doc_id", "text", "domain"])
         .head(settings.graphrag_doc_limit)
+        .collect(streaming=True)
         .to_dicts()
     )
-    queries = pl.read_parquet(settings.processed_data_dir / "queries.parquet").to_dicts()[
-        : settings.graphrag_query_limit
-    ]
+    queries = (
+        pl.scan_parquet(settings.processed_data_dir / "queries.parquet")
+        .select(["query", "relevant_doc_ids"])
+        .limit(settings.graphrag_query_limit)
+        .collect(streaming=True)
+        .to_dicts()
+    )
 
     doc_ids = [str(row["doc_id"]) for row in docs]
     doc_texts = [str(row["text"]) for row in docs]
